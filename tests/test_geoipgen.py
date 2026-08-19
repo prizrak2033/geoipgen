@@ -109,6 +109,45 @@ class RandomGenerationTests(unittest.TestCase):
         self.assertEqual(generated, set(generate.rangeIP("192.168.1.0/29")))
 
 
+class GeneratorInjectionTests(unittest.TestCase):
+    def test_defaults_to_the_random_module(self):
+        random.seed(99)
+        first = [generate.IP("45.9.132.0/22") for _ in range(5)]
+        random.seed(99)
+        self.assertEqual(first, [generate.IP("45.9.132.0/22") for _ in range(5)])
+
+    def test_an_injected_generator_is_used_instead_of_the_global_one(self):
+        random.seed(1)
+        injected = generate.IP("45.9.132.0/22", rng=random.Random(2024))
+        random.seed(1)
+        self.assertEqual(injected, generate.IP("45.9.132.0/22", rng=random.Random(2024)))
+
+    def test_system_rng_produces_addresses_inside_the_block(self):
+        network = ipaddress.ip_network("45.9.132.0/22")
+        for _ in range(200):
+            self.assertIn(ipaddress.IPv4Address(
+                generate.IP("45.9.132.0/22", rng=geoipgen.SYSTEM_RNG)), network)
+
+    def test_system_rng_is_not_seedable_and_so_not_reproducible(self):
+        draws = {generate.IP("10.0.0.0/8", rng=geoipgen.SYSTEM_RNG) for _ in range(50)}
+        self.assertGreater(len(draws), 40)
+
+    def test_rng_reaches_country_helpers(self):
+        blocks = set(generate.cidrs("es"))
+        self.assertIn(generate.randomCIDR("es", rng=geoipgen.SYSTEM_RNG), blocks)
+        seeded = random.Random(7)
+        self.assertEqual(
+            generate.randomCIDR("es", rng=seeded),
+            random.Random(7).choice(generate.cidrs("es")),
+        )
+
+    def test_random_ip_threads_the_generator_through_both_steps(self):
+        self.assertEqual(
+            generate.randomIP("es", rng=random.Random(31337)),
+            generate.randomIP("es", rng=random.Random(31337)),
+        )
+
+
 class CountryDataTests(unittest.TestCase):
     def test_country_data_ships_with_the_package(self):
         codes = generate.countries()

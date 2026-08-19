@@ -31,13 +31,13 @@ len(geoipgen.rangeIP("45.9.132.0/22"))   # 1022
 
 ### Generating
 
-#### `geoipgen.IP(cidr)`
+#### `geoipgen.IP(cidr, rng=None)`
 Returns a uniformly random usable address from a CIDR block.
 
-#### `geoipgen.randomCIDR(country_code)`
+#### `geoipgen.randomCIDR(country_code, rng=None)`
 Returns a random CIDR block allocated to a two-letter country code.
 
-#### `geoipgen.randomIP(country_code)`
+#### `geoipgen.randomIP(country_code, rng=None)`
 Returns a random address from a random CIDR block of a country.
 
 #### `geoipgen.rangeIP(cidr)`
@@ -73,9 +73,35 @@ the same `SubnetInfo`.
 
 ![screenshot](https://i.ibb.co/WnsxBNQ/Screenshot-2.png)
 
+## Randomness
+
+By default the generators draw from Python's `random` module, a Mersenne
+Twister. It is fast and reproducible under `random.seed()`, which is what you
+want for test fixtures — but it is **not cryptographically secure**. An
+observer who sees enough output can recover its internal state and predict
+every address that follows.
+
+If unpredictability matters for your use case, pass a generator backed by the
+OS entropy pool:
+
+```python
+geoipgen.randomIP("es", rng=geoipgen.SYSTEM_RNG)
+geoipgen.IP("45.9.132.0/22", rng=geoipgen.SYSTEM_RNG)
+```
+
+`rng` accepts any object with the `randint`/`choice` methods, so
+`random.Random(seed)` works too when you want reproducible output:
+
+```python
+import random
+geoipgen.randomIP("es", rng=random.Random(42))   # same result every run
+```
+
 ## Notes
 
 - Country codes are case-insensitive; an unknown code raises `ValueError`.
+- Country codes are validated against `[a-z]{2}` before touching the
+  filesystem, so a code can never escape the bundled data directory.
 - Unaligned blocks are normalised, so `172.16.5.7/20` is treated as
   `172.16.0.0/20`.
 - `/31` is handled per RFC 3021 (both addresses usable) and `/32` as a single

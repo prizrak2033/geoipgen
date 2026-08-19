@@ -3,6 +3,7 @@
 from . import functions, generate, subnetCal
 from .generate import (
     IP,
+    SYSTEM_RNG,
     cidrs,
     countries,
     iterIP,
@@ -16,6 +17,7 @@ __version__ = "1.0.0"
 
 __all__ = [
     "IP",
+    "SYSTEM_RNG",
     "SubnetInfo",
     "cidrs",
     "countries",
