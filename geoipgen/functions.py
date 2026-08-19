@@ -1,8 +1,23 @@
-def ips(start, end):
-    import socket, struct
-    end_host=end
-    start = struct.unpack('>I', socket.inet_aton(start))[0]
-    end = struct.unpack('>I', socket.inet_aton(end))[0]
-    arr=[socket.inet_ntoa(struct.pack('>I', i)) for i in range(start, end)]
-    arr.append(end_host)
-    return arr
+"""Helpers for expanding IPv4 address ranges."""
+
+import ipaddress
+from typing import Iterator, List
+
+
+def iter_ips(start, end) -> Iterator[str]:
+    """Yield every address from ``start`` to ``end``, both inclusive.
+
+    Prefer this over :func:`ips` for wide ranges: it streams the addresses
+    instead of building the whole list in memory.
+    """
+    first = int(ipaddress.IPv4Address(str(start).strip()))
+    last = int(ipaddress.IPv4Address(str(end).strip()))
+    if first > last:
+        raise ValueError("start address {!r} is above end address {!r}".format(start, end))
+    for value in range(first, last + 1):
+        yield str(ipaddress.IPv4Address(value))
+
+
+def ips(start, end) -> List[str]:
+    """Return the list of addresses from ``start`` to ``end``, both inclusive."""
+    return list(iter_ips(start, end))
