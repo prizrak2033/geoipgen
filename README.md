@@ -2,9 +2,9 @@
 
 Generator of valid IPv4 addresses by country.
 
-Ships the IPv4 CIDR allocations of 240 country codes and picks random,
-uniformly distributed addresses out of them. Pure standard library, no
-dependencies.
+Ships the IPv4 CIDR allocations of 240 country codes. Picks random, uniformly
+distributed addresses out of them — and looks addresses back up to find which
+country holds them. Pure standard library, no dependencies.
 
 Subnet maths inspired by [subnet-calculator-cidr](https://github.com/christivn/subnet-calculator-cidr).
 
@@ -25,6 +25,9 @@ geoipgen.randomIP("es")                  # '62.36.125.121'
 geoipgen.randomCIDR("es")                # '185.26.4.0/22'
 geoipgen.IP("45.9.132.0/22")             # '45.9.133.177'
 len(geoipgen.rangeIP("45.9.132.0/22"))   # 1022
+
+geoipgen.countryOf("8.8.8.8")            # 'us'
+geoipgen.lookup("8.8.8.8")               # Allocation(ip='8.8.8.8', country='us', cidr='8.0.0.0/9')
 ```
 
 ## API
@@ -52,6 +55,36 @@ Returns every CIDR block allocated to a country, as a tuple. Cached.
 
 #### `geoipgen.countries()`
 Returns every available country code, sorted.
+
+### Reverse lookup
+
+The inverse of the generator: given an address, which country holds it. The
+bundled blocks are read once into a sorted interval index and each lookup is a
+binary search — about 5 µs per call.
+
+#### `geoipgen.countryOf(ip)`
+Returns the two-letter country code holding `ip`, or `None`.
+
+#### `geoipgen.lookup(ip)`
+Returns an `Allocation` named tuple, or `None`:
+
+```python
+>>> geoipgen.lookup("45.9.132.5")
+Allocation(ip='45.9.132.5', country='es', cidr='45.9.132.0/22')
+```
+
+#### `geoipgen.blockOf(ip)`
+Returns just the CIDR block containing `ip`, or `None`.
+
+#### `geoipgen.warm()`
+Builds the index up front and returns the number of blocks in it. The index is
+built lazily on the first lookup, which reads every data file and takes about a
+second; call this at startup if you would rather not pay it on the first
+request.
+
+Accepts a dotted string, an `int`, or an `ipaddress.IPv4Address`. A malformed
+address raises `ValueError`; a well-formed one that simply is not in the data
+returns `None`.
 
 ### Calculating
 
@@ -106,6 +139,13 @@ geoipgen.randomIP("es", rng=random.Random(42))   # same result every run
   `172.16.0.0/20`.
 - `/31` is handled per RFC 3021 (both addresses usable) and `/32` as a single
   host.
+- The dataset covers about 86% of the IPv4 space. Private, reserved and
+  unallocated addresses return `None` from the lookup functions.
+- `zz` is a placeholder code in the dataset rather than a real country; it is
+  returned as-is when an address falls in one of its blocks.
+- The shipped blocks are disjoint, so an address matches at most one. The test
+  suite asserts this, so a data update that introduced an overlap would fail
+  rather than silently return an arbitrary match.
 
 ## Tests
 

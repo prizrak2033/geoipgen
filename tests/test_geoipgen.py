@@ -5,7 +5,7 @@ import random
 import unittest
 
 import geoipgen
-from geoipgen import functions, generate, subnetCal
+from geoipgen import functions, generate, reverse, subnetCal
 
 
 class SubnetCalculationTests(unittest.TestCase):
@@ -183,9 +183,82 @@ class CountryDataTests(unittest.TestCase):
             self.assertTrue(any(address in block for block in blocks))
 
 
+class ReverseLookupTests(unittest.TestCase):
+    def test_shipped_blocks_are_disjoint(self):
+        """The interval index assumes no block overlaps another.
+
+        If a data update ever broke this, lookup() would silently return an
+        arbitrary one of the overlapping candidates, so guard it here.
+        """
+        spans = sorted(
+            (int(net.network_address), int(net.broadcast_address), code, block)
+            for code in generate.countries()
+            for block in generate.cidrs(code)
+            for net in [ipaddress.IPv4Network(block)]
+        )
+        for earlier, later in zip(spans, spans[1:]):
+            self.assertLess(
+                earlier[1], later[0],
+                "blocks overlap: {} ({}) and {} ({})".format(
+                    earlier[3], earlier[2], later[3], later[2]),
+            )
+
+    def test_known_addresses_resolve(self):
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
+        self.assertEqual(reverse.countryOf("45.9.132.5"), "es")
+        self.assertEqual(reverse.blockOf("45.9.132.5"), "45.9.132.0/22")
+
+    def test_private_and_reserved_ranges_are_unallocated(self):
+        for ip in ["192.168.1.1", "10.0.0.1", "127.0.0.1", "0.0.0.0", "255.255.255.255"]:
+            with self.subTest(ip=ip):
+                self.assertIsNone(reverse.countryOf(ip))
+                self.assertIsNone(reverse.lookup(ip))
+                self.assertIsNone(reverse.blockOf(ip))
+
+    def test_round_trips_with_the_generator(self):
+        """An address generated for a country must look up as that country."""
+        random.seed(4242)
+        for code in generate.countries():
+            with self.subTest(country=code):
+                self.assertEqual(reverse.countryOf(generate.randomIP(code)), code)
+
+    def test_every_block_boundary_maps_back_to_its_own_block(self):
+        for code in generate.countries():
+            for block in generate.cidrs(code):
+                net = ipaddress.IPv4Network(block)
+                for address in (net.network_address, net.broadcast_address):
+                    found = reverse.lookup(address)
+                    self.assertIsNotNone(found, "{} unmatched".format(address))
+                    self.assertEqual((found.country, found.cidr), (code, block))
+
+    def test_allocation_fields(self):
+        found = reverse.lookup("45.9.132.5")
+        self.assertEqual(found.ip, "45.9.132.5")
+        self.assertEqual(found.country, "es")
+        self.assertEqual(found.cidr, "45.9.132.0/22")
+        self.assertEqual(len(found), 3)
+
+    def test_accepts_several_address_forms(self):
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
+        self.assertEqual(reverse.countryOf(" 8.8.8.8 "), "us")
+        self.assertEqual(reverse.countryOf(ipaddress.IPv4Address("8.8.8.8")), "us")
+        self.assertEqual(reverse.countryOf(int(ipaddress.IPv4Address("8.8.8.8"))), "us")
+
+    def test_rejects_malformed_addresses(self):
+        for ip in ["not-an-ip", "45.9.132.0/22", "999.1.1.1", "", "1.2.3"]:
+            with self.subTest(ip=ip), self.assertRaises(ValueError):
+                reverse.lookup(ip)
+
+    def test_warm_reports_the_indexed_block_count(self):
+        indexed = reverse.warm()
+        expected = sum(len(generate.cidrs(code)) for code in generate.countries())
+        self.assertEqual(indexed, expected)
+
+
 class PublicApiTests(unittest.TestCase):
     def test_documented_names_are_exported(self):
-        for name in ["IP", "rangeIP", "randomCIDR", "simpleCalculate", "printCalculate"]:
+        for name in ["IP", "rangeIP", "randomCIDR", "simpleCalculate", "printCalculate",
+                     "lookup", "countryOf", "blockOf", "warm", "Allocation"]:
             self.assertTrue(hasattr(geoipgen, name), name)
 
     def test_submodules_remain_reachable(self):
