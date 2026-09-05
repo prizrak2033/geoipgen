@@ -18,6 +18,7 @@ from functools import lru_cache
 from typing import Optional, NamedTuple, Tuple
 
 from .generate import cidrs, countries
+from .subnetCal import AddressLike
 
 
 class Allocation(NamedTuple):
@@ -31,8 +32,8 @@ class Allocation(NamedTuple):
 class _Index(NamedTuple):
     """Parallel arrays of block bounds, sorted by start address."""
 
-    starts: array
-    ends: array
+    starts: "array[int]"
+    ends: "array[int]"
     codes: Tuple[str, ...]
     blocks: Tuple[str, ...]
 
@@ -69,7 +70,7 @@ def warm() -> int:
     return len(_index().starts)
 
 
-def _address(ip) -> ipaddress.IPv4Address:
+def _address(ip: AddressLike) -> ipaddress.IPv4Address:
     if isinstance(ip, ipaddress.IPv4Address):
         return ip
     try:
@@ -78,7 +79,7 @@ def _address(ip) -> ipaddress.IPv4Address:
         raise ValueError("invalid IPv4 address: {!r}".format(ip)) from exc
 
 
-def lookup(ip) -> Optional[Allocation]:
+def lookup(ip: AddressLike) -> Optional[Allocation]:
     """Return the :class:`Allocation` covering ``ip``, or ``None``.
 
     ``None`` means the address is not in the bundled data, which covers about
@@ -94,7 +95,7 @@ def lookup(ip) -> Optional[Allocation]:
     return None
 
 
-def countryOf(ip) -> Optional[str]:
+def countryOf(ip: AddressLike) -> Optional[str]:
     """Return the two-letter country code holding ``ip``, or ``None``.
 
     Note that ``zz`` is a placeholder in the dataset rather than a real
@@ -104,7 +105,7 @@ def countryOf(ip) -> Optional[str]:
     return found.country if found is not None else None
 
 
-def blockOf(ip) -> Optional[str]:
+def blockOf(ip: AddressLike) -> Optional[str]:
     """Return the CIDR block containing ``ip``, or ``None``."""
     found = lookup(ip)
     return found.cidr if found is not None else None

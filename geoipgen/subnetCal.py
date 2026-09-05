@@ -6,7 +6,13 @@ handles the bit twiddling correctly for every prefix length (including ``/0``,
 """
 
 import ipaddress
-from typing import NamedTuple, Tuple
+from typing import NamedTuple, Tuple, Union
+
+#: Anything this module will read a CIDR block from.
+CIDRLike = Union[str, ipaddress.IPv4Network, ipaddress.IPv4Interface]
+
+#: Anything this module will read a single address from.
+AddressLike = Union[str, int, ipaddress.IPv4Address]
 
 
 class SubnetInfo(NamedTuple):
@@ -25,7 +31,7 @@ class SubnetInfo(NamedTuple):
     total_host: int
 
 
-def parseCIDR(cidr) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Network]:
+def parseCIDR(cidr: CIDRLike) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Network]:
     """Return ``(address, network)`` for ``cidr``.
 
     The address keeps the host bits exactly as they were written, while the
@@ -39,7 +45,7 @@ def parseCIDR(cidr) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Network]:
     return interface.ip, interface.network
 
 
-def hostRange(cidr) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Address]:
+def hostRange(cidr: CIDRLike) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Address]:
     """Return the first and last usable address of ``cidr``, inclusive.
 
     Blocks of ``/30`` and larger exclude the network and broadcast addresses.
@@ -52,12 +58,12 @@ def hostRange(cidr) -> Tuple[ipaddress.IPv4Address, ipaddress.IPv4Address]:
     return network.network_address + 1, network.broadcast_address - 1
 
 
-def _binary(address) -> str:
+def _binary(address: AddressLike) -> str:
     """Render an IPv4 address as dotted zero-padded binary octets."""
     return ".".join(format(octet, "08b") for octet in ipaddress.IPv4Address(address).packed)
 
 
-def simpleCalculate(cidr) -> SubnetInfo:
+def simpleCalculate(cidr: CIDRLike) -> SubnetInfo:
     """Return a :class:`SubnetInfo` describing ``cidr``."""
     address, network = parseCIDR(cidr)
     min_host, max_host = hostRange(network)
@@ -71,7 +77,7 @@ def simpleCalculate(cidr) -> SubnetInfo:
     )
 
 
-def printCalculate(cidr) -> SubnetInfo:
+def printCalculate(cidr: CIDRLike) -> SubnetInfo:
     """Print a detailed report for ``cidr`` and return its :class:`SubnetInfo`."""
     network = parseCIDR(cidr)[1]
     info = simpleCalculate(cidr)

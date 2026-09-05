@@ -1,10 +1,14 @@
 # geoipgen
 
+[![CI](https://github.com/prizrak2033/geoipgen/actions/workflows/ci.yml/badge.svg)](https://github.com/prizrak2033/geoipgen/actions/workflows/ci.yml)
+
 Generator of valid IPv4 addresses by country.
 
 Ships the IPv4 CIDR allocations of 240 country codes. Picks random, uniformly
 distributed addresses out of them — and looks addresses back up to find which
-country holds them. Pure standard library, no dependencies.
+country holds them. Pure standard library, no dependencies, fully type-hinted.
+
+Runs on Python 3.8+.
 
 Subnet maths inspired by [subnet-calculator-cidr](https://github.com/christivn/subnet-calculator-cidr).
 
@@ -147,11 +151,18 @@ geoipgen.randomIP("es", rng=random.Random(42))   # same result every run
   suite asserts this, so a data update that introduced an overlap would fail
   rather than silently return an arbitrary match.
 
-## Tests
+## Development
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests   # the test suite
+python -m mypy geoipgen/ --strict      # type check (clean)
 ```
+
+CI runs the suite on Python 3.8 through 3.13, type-checks the package, and
+re-validates the bundled data on every push and pull request.
+
+The package ships a `py.typed` marker, so type checkers use its annotations
+in your code rather than falling back to `Any`.
 
 ## Example
 

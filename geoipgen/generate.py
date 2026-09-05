@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
 from . import functions, subnetCal
+from .subnetCal import CIDRLike
 
 DATA_DIR = Path(__file__).resolve().parent / "ipv4"
 
@@ -25,12 +26,16 @@ _COUNTRY_CODE = re.compile(r"[a-z]{2}")
 SYSTEM_RNG = random.SystemRandom()
 
 
-def _generator(rng):
-    """Return the generator to draw from, defaulting to the `random` module."""
-    return random if rng is None else rng
+def _generator(rng: Optional[random.Random]) -> random.Random:
+    """Return the generator to draw from, defaulting to the `random` module.
+
+    The :mod:`random` module exposes the same ``randint``/``choice`` names as a
+    :class:`random.Random` instance, so it stands in for one here.
+    """
+    return random if rng is None else rng  # type: ignore[return-value]
 
 
-def IP(cidr, rng: Optional[random.Random] = None) -> str:
+def IP(cidr: CIDRLike, rng: Optional[random.Random] = None) -> str:
     """Return a uniformly random usable address from ``cidr``.
 
     ``rng`` is any object with a :meth:`~random.Random.randint` method; it
@@ -41,7 +46,7 @@ def IP(cidr, rng: Optional[random.Random] = None) -> str:
     return str(ipaddress.IPv4Address(value))
 
 
-def iterIP(cidr) -> Iterator[str]:
+def iterIP(cidr: CIDRLike) -> Iterator[str]:
     """Yield every usable address of ``cidr`` in order.
 
     Prefer this over :func:`rangeIP` for short prefixes: a ``/8`` holds more
@@ -51,7 +56,7 @@ def iterIP(cidr) -> Iterator[str]:
     return functions.iter_ips(first, last)
 
 
-def rangeIP(cidr) -> List[str]:
+def rangeIP(cidr: CIDRLike) -> List[str]:
     """Return the list of every usable address of ``cidr``."""
     return list(iterIP(cidr))
 
@@ -69,7 +74,7 @@ def _load(code: str) -> Tuple[str, ...]:
     return blocks
 
 
-def cidrs(country) -> Tuple[str, ...]:
+def cidrs(country: str) -> Tuple[str, ...]:
     """Return every CIDR block allocated to ``country`` as a two-letter code.
 
     Lookups are case-insensitive and cached, so a data file is read only once.
@@ -85,7 +90,7 @@ def countries() -> Tuple[str, ...]:
     return tuple(sorted(path.stem for path in DATA_DIR.glob("*.cidr")))
 
 
-def randomCIDR(country, rng: Optional[random.Random] = None) -> str:
+def randomCIDR(country: str, rng: Optional[random.Random] = None) -> str:
     """Return a random CIDR block allocated to ``country``.
 
     ``rng`` is any object with a :meth:`~random.Random.choice` method; it
@@ -94,7 +99,7 @@ def randomCIDR(country, rng: Optional[random.Random] = None) -> str:
     return _generator(rng).choice(cidrs(country))
 
 
-def randomIP(country, rng: Optional[random.Random] = None) -> str:
+def randomIP(country: str, rng: Optional[random.Random] = None) -> str:
     """Return a random address from a random CIDR block of ``country``.
 
     ``rng`` is passed through to :func:`randomCIDR` and :func:`IP`.
