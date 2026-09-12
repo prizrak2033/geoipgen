@@ -2,10 +2,12 @@
 
 import ipaddress
 import random
+import threading
 import unittest
+from unittest import mock
 
 import geoipgen
-from geoipgen import functions, generate, subnetCal
+from geoipgen import functions, generate, reverse, subnetCal
 
 
 class SubnetCalculationTests(unittest.TestCase):
@@ -109,6 +111,45 @@ class RandomGenerationTests(unittest.TestCase):
         self.assertEqual(generated, set(generate.rangeIP("192.168.1.0/29")))
 
 
+class GeneratorInjectionTests(unittest.TestCase):
+    def test_defaults_to_the_random_module(self):
+        random.seed(99)
+        first = [generate.IP("45.9.132.0/22") for _ in range(5)]
+        random.seed(99)
+        self.assertEqual(first, [generate.IP("45.9.132.0/22") for _ in range(5)])
+
+    def test_an_injected_generator_is_used_instead_of_the_global_one(self):
+        random.seed(1)
+        injected = generate.IP("45.9.132.0/22", rng=random.Random(2024))
+        random.seed(1)
+        self.assertEqual(injected, generate.IP("45.9.132.0/22", rng=random.Random(2024)))
+
+    def test_system_rng_produces_addresses_inside_the_block(self):
+        network = ipaddress.ip_network("45.9.132.0/22")
+        for _ in range(200):
+            self.assertIn(ipaddress.IPv4Address(
+                generate.IP("45.9.132.0/22", rng=geoipgen.SYSTEM_RNG)), network)
+
+    def test_system_rng_is_not_seedable_and_so_not_reproducible(self):
+        draws = {generate.IP("10.0.0.0/8", rng=geoipgen.SYSTEM_RNG) for _ in range(50)}
+        self.assertGreater(len(draws), 40)
+
+    def test_rng_reaches_country_helpers(self):
+        blocks = set(generate.cidrs("es"))
+        self.assertIn(generate.randomCIDR("es", rng=geoipgen.SYSTEM_RNG), blocks)
+        seeded = random.Random(7)
+        self.assertEqual(
+            generate.randomCIDR("es", rng=seeded),
+            random.Random(7).choice(generate.cidrs("es")),
+        )
+
+    def test_random_ip_threads_the_generator_through_both_steps(self):
+        self.assertEqual(
+            generate.randomIP("es", rng=random.Random(31337)),
+            generate.randomIP("es", rng=random.Random(31337)),
+        )
+
+
 class CountryDataTests(unittest.TestCase):
     def test_country_data_ships_with_the_package(self):
         codes = generate.countries()
@@ -144,9 +185,126 @@ class CountryDataTests(unittest.TestCase):
             self.assertTrue(any(address in block for block in blocks))
 
 
+class ReverseLookupTests(unittest.TestCase):
+    def test_shipped_blocks_are_disjoint(self):
+        """The interval index assumes no block overlaps another.
+
+        If a data update ever broke this, lookup() would silently return an
+        arbitrary one of the overlapping candidates, so guard it here.
+        """
+        spans = sorted(
+            (int(net.network_address), int(net.broadcast_address), code, block)
+            for code in generate.countries()
+            for block in generate.cidrs(code)
+            for net in [ipaddress.IPv4Network(block)]
+        )
+        for earlier, later in zip(spans, spans[1:]):
+            self.assertLess(
+                earlier[1], later[0],
+                "blocks overlap: {} ({}) and {} ({})".format(
+                    earlier[3], earlier[2], later[3], later[2]),
+            )
+
+    def test_known_addresses_resolve(self):
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
+        self.assertEqual(reverse.countryOf("45.9.132.5"), "es")
+        self.assertEqual(reverse.blockOf("45.9.132.5"), "45.9.132.0/22")
+
+    def test_private_and_reserved_ranges_are_unallocated(self):
+        for ip in ["192.168.1.1", "10.0.0.1", "127.0.0.1", "0.0.0.0", "255.255.255.255"]:
+            with self.subTest(ip=ip):
+                self.assertIsNone(reverse.countryOf(ip))
+                self.assertIsNone(reverse.lookup(ip))
+                self.assertIsNone(reverse.blockOf(ip))
+
+    def test_round_trips_with_the_generator(self):
+        """An address generated for a country must look up as that country."""
+        random.seed(4242)
+        for code in generate.countries():
+            with self.subTest(country=code):
+                self.assertEqual(reverse.countryOf(generate.randomIP(code)), code)
+
+    def test_every_block_boundary_maps_back_to_its_own_block(self):
+        for code in generate.countries():
+            for block in generate.cidrs(code):
+                net = ipaddress.IPv4Network(block)
+                for address in (net.network_address, net.broadcast_address):
+                    found = reverse.lookup(address)
+                    self.assertIsNotNone(found, "{} unmatched".format(address))
+                    self.assertEqual((found.country, found.cidr), (code, block))
+
+    def test_allocation_fields(self):
+        found = reverse.lookup("45.9.132.5")
+        self.assertEqual(found.ip, "45.9.132.5")
+        self.assertEqual(found.country, "es")
+        self.assertEqual(found.cidr, "45.9.132.0/22")
+        self.assertEqual(len(found), 3)
+
+    def test_accepts_several_address_forms(self):
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
+        self.assertEqual(reverse.countryOf(" 8.8.8.8 "), "us")
+        self.assertEqual(reverse.countryOf(ipaddress.IPv4Address("8.8.8.8")), "us")
+        self.assertEqual(reverse.countryOf(int(ipaddress.IPv4Address("8.8.8.8"))), "us")
+
+    def test_rejects_malformed_addresses(self):
+        for ip in ["not-an-ip", "45.9.132.0/22", "999.1.1.1", "", "1.2.3"]:
+            with self.subTest(ip=ip), self.assertRaises(ValueError):
+                reverse.lookup(ip)
+
+    def test_warm_reports_the_indexed_block_count(self):
+        indexed = reverse.warm()
+        expected = sum(len(generate.cidrs(code)) for code in generate.countries())
+        self.assertEqual(indexed, expected)
+
+
+class IndexBuildConcurrencyTests(unittest.TestCase):
+    def test_the_index_is_built_once_under_concurrent_cold_lookups(self):
+        """Threads racing the first lookup must not each build the index.
+
+        `functools.lru_cache` does not serialise: on a miss it runs the body in
+        every concurrent caller. Guarding the build with a lock is what keeps
+        eight cold lookups at ~1.2s instead of ~64s. Assert the invariant --
+        exactly one build -- rather than timing it, so the test cannot flake on
+        a loaded machine.
+        """
+        builds = []
+        build = reverse._build_index
+
+        def counting_build():
+            builds.append(1)
+            return build()
+
+        reverse._reset_index()
+        with mock.patch.object(reverse, "_build_index", counting_build):
+            started = threading.Barrier(8, timeout=30)
+            failures = []
+
+            def worker():
+                try:
+                    started.wait()          # all threads miss the cache together
+                    reverse.countryOf("8.8.8.8")
+                except Exception as exc:    # noqa: BLE001 - reported below
+                    failures.append(exc)
+
+            threads = [threading.Thread(target=worker) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+
+        self.assertEqual(failures, [])
+        self.assertFalse([t for t in threads if t.is_alive()], "a worker hung")
+        self.assertEqual(len(builds), 1, "index built {} times".format(len(builds)))
+
+    def test_lookups_still_work_after_a_reset(self):
+        reverse._reset_index()
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
+
+
 class PublicApiTests(unittest.TestCase):
     def test_documented_names_are_exported(self):
-        for name in ["IP", "rangeIP", "randomCIDR", "simpleCalculate", "printCalculate"]:
+        for name in ["IP", "rangeIP", "randomCIDR", "simpleCalculate", "printCalculate",
+                     "lookup", "countryOf", "blockOf", "warm", "Allocation"]:
             self.assertTrue(hasattr(geoipgen, name), name)
 
     def test_submodules_remain_reachable(self):

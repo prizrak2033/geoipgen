@@ -3,8 +3,10 @@
 import ipaddress
 from typing import Iterator, List
 
+from .subnetCal import AddressLike
 
-def iter_ips(start, end) -> Iterator[str]:
+
+def iter_ips(start: AddressLike, end: AddressLike) -> Iterator[str]:
     """Yield every address from ``start`` to ``end``, both inclusive.
 
     Prefer this over :func:`ips` for wide ranges: it streams the addresses
@@ -18,6 +20,6 @@ def iter_ips(start, end) -> Iterator[str]:
         yield str(ipaddress.IPv4Address(value))
 
 
-def ips(start, end) -> List[str]:
+def ips(start: AddressLike, end: AddressLike) -> List[str]:
     """Return the list of addresses from ``start`` to ``end``, both inclusive."""
     return list(iter_ips(start, end))

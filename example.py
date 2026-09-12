@@ -26,3 +26,10 @@ show(CYAN, "Random IP from '{}' in one call".format(country), geoipgen.randomIP(
 
 print()
 geoipgen.printCalculate(country_cidr)
+
+print()
+ip = geoipgen.randomIP(country)
+show(YELLOW, "Generated a random '{}' address".format(country), ip)
+show(YELLOW, "...and looked it back up", geoipgen.lookup(ip))
+show(YELLOW, "Who owns 8.8.8.8", geoipgen.lookup("8.8.8.8"))
+show(YELLOW, "Who owns 192.168.1.1", geoipgen.countryOf("192.168.1.1"))

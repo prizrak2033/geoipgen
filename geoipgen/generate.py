@@ -5,22 +5,48 @@ import random
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 from . import functions, subnetCal
+from .subnetCal import CIDRLike
 
 DATA_DIR = Path(__file__).resolve().parent / "ipv4"
 
 _COUNTRY_CODE = re.compile(r"[a-z]{2}")
 
+#: An unpredictable generator drawing from the OS entropy pool.
+#:
+#: The default generator is the :mod:`random` module, a Mersenne Twister. It is
+#: fast and reproducible under :func:`random.seed`, but it is *not*
+#: cryptographically secure: an observer who sees enough output can recover its
+#: internal state and predict every address that follows. Pass this generator
+#: instead when that matters::
+#:
+#:     geoipgen.randomIP("es", rng=geoipgen.SYSTEM_RNG)
+SYSTEM_RNG = random.SystemRandom()
 
-def IP(cidr) -> str:
-    """Return a uniformly random usable address from ``cidr``."""
+
+def _generator(rng: Optional[random.Random]) -> random.Random:
+    """Return the generator to draw from, defaulting to the `random` module.
+
+    The :mod:`random` module exposes the same ``randint``/``choice`` names as a
+    :class:`random.Random` instance, so it stands in for one here.
+    """
+    return random if rng is None else rng  # type: ignore[return-value]
+
+
+def IP(cidr: CIDRLike, rng: Optional[random.Random] = None) -> str:
+    """Return a uniformly random usable address from ``cidr``.
+
+    ``rng`` is any object with a :meth:`~random.Random.randint` method; it
+    defaults to the :mod:`random` module. See :data:`SYSTEM_RNG`.
+    """
     first, last = subnetCal.hostRange(cidr)
-    return str(ipaddress.IPv4Address(random.randint(int(first), int(last))))
+    value = _generator(rng).randint(int(first), int(last))
+    return str(ipaddress.IPv4Address(value))
 
 
-def iterIP(cidr) -> Iterator[str]:
+def iterIP(cidr: CIDRLike) -> Iterator[str]:
     """Yield every usable address of ``cidr`` in order.
 
     Prefer this over :func:`rangeIP` for short prefixes: a ``/8`` holds more
@@ -30,7 +56,7 @@ def iterIP(cidr) -> Iterator[str]:
     return functions.iter_ips(first, last)
 
 
-def rangeIP(cidr) -> List[str]:
+def rangeIP(cidr: CIDRLike) -> List[str]:
     """Return the list of every usable address of ``cidr``."""
     return list(iterIP(cidr))
 
@@ -48,7 +74,7 @@ def _load(code: str) -> Tuple[str, ...]:
     return blocks
 
 
-def cidrs(country) -> Tuple[str, ...]:
+def cidrs(country: str) -> Tuple[str, ...]:
     """Return every CIDR block allocated to ``country`` as a two-letter code.
 
     Lookups are case-insensitive and cached, so a data file is read only once.
@@ -64,11 +90,18 @@ def countries() -> Tuple[str, ...]:
     return tuple(sorted(path.stem for path in DATA_DIR.glob("*.cidr")))
 
 
-def randomCIDR(country) -> str:
-    """Return a random CIDR block allocated to ``country``."""
-    return random.choice(cidrs(country))
+def randomCIDR(country: str, rng: Optional[random.Random] = None) -> str:
+    """Return a random CIDR block allocated to ``country``.
+
+    ``rng`` is any object with a :meth:`~random.Random.choice` method; it
+    defaults to the :mod:`random` module. See :data:`SYSTEM_RNG`.
+    """
+    return _generator(rng).choice(cidrs(country))
 
 
-def randomIP(country) -> str:
-    """Return a random address from a random CIDR block of ``country``."""
-    return IP(randomCIDR(country))
+def randomIP(country: str, rng: Optional[random.Random] = None) -> str:
+    """Return a random address from a random CIDR block of ``country``.
+
+    ``rng`` is passed through to :func:`randomCIDR` and :func:`IP`.
+    """
+    return IP(randomCIDR(country, rng=rng), rng=rng)
