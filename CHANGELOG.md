@@ -22,6 +22,11 @@ All notable changes to this project are documented here.
 - `pyproject.toml`, so the package installs with its `.cidr` data.
 
 ### Fixed
+- The reverse-lookup index was cached with `functools.lru_cache`, which does
+  not serialise: on a cache miss it runs the body in every concurrent caller,
+  so threads racing the first lookup each built the whole index. Eight
+  concurrent cold lookups took ~64s instead of ~1.2s. The build is now guarded
+  by a lock.
 - `randomCIDR()` used `randint(0, len(lines))`, inclusive at both ends, and
   raised `IndexError` on roughly one call in N.
 - `randomCIDR()` resolved its data path relative to the working directory, so

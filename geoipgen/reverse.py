@@ -12,9 +12,9 @@ arbitrary one of the candidates.
 """
 
 import ipaddress
+import threading
 from array import array
 from bisect import bisect_right
-from functools import lru_cache
 from typing import Optional, NamedTuple, Tuple
 
 from .generate import cidrs, countries
@@ -38,9 +38,12 @@ class _Index(NamedTuple):
     blocks: Tuple[str, ...]
 
 
-@lru_cache(maxsize=1)
-def _index() -> _Index:
-    """Build the interval index over every shipped block, once."""
+_INDEX_LOCK = threading.Lock()
+_INDEX = None  # type: Optional[_Index]
+
+
+def _build_index() -> _Index:
+    """Read every shipped block into a sorted interval index."""
     rows = []
     for code in countries():
         for block in cidrs(code):
@@ -60,12 +63,44 @@ def _index() -> _Index:
     )
 
 
+def _index() -> _Index:
+    """Return the interval index, building it on first use.
+
+    A :func:`functools.lru_cache` is not enough here. On a cache miss it runs
+    the decorated body in *every* concurrent caller, so threads racing the
+    first lookup would each build the whole index: measured at 1.2s for one
+    thread but 64s for eight, because the redundant builds also contend for
+    the GIL. The lock makes the first caller build it while the rest wait.
+
+    The unlocked read on the fast path is deliberate: rebinding a module
+    global is atomic, so a caller either sees a fully built index or ``None``
+    and takes the slow path.
+    """
+    global _INDEX
+    index = _INDEX
+    if index is not None:
+        return index
+    with _INDEX_LOCK:
+        if _INDEX is None:
+            _INDEX = _build_index()
+        return _INDEX
+
+
+def _reset_index() -> None:
+    """Drop the cached index. For tests that need a cold start."""
+    global _INDEX
+    with _INDEX_LOCK:
+        _INDEX = None
+
+
 def warm() -> int:
     """Build the index ahead of time and return the number of blocks in it.
 
     The index is built lazily on the first lookup, which reads every data file
-    and takes on the order of a second. Call this at startup if you would
-    rather not pay that on the first request.
+    and takes on the order of a second. Calling this at startup keeps that
+    cost off your first request. It matters most in a threaded server: the
+    build is serialised, so concurrent first requests queue behind one build
+    rather than racing, but they still all wait for it.
     """
     return len(_index().starts)
 

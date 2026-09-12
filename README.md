@@ -86,6 +86,11 @@ built lazily on the first lookup, which reads every data file and takes about a
 second; call this at startup if you would rather not pay it on the first
 request.
 
+The build is serialised, so concurrent first requests queue behind a single
+build rather than racing to repeat it — but they all still wait for it. In a
+threaded server, calling `warm()` at startup keeps that second off your
+request path entirely.
+
 Accepts a dotted string, an `int`, or an `ipaddress.IPv4Address`. A malformed
 address raises `ValueError`; a well-formed one that simply is not in the data
 returns `None`.

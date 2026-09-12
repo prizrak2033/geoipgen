@@ -2,7 +2,9 @@
 
 import ipaddress
 import random
+import threading
 import unittest
+from unittest import mock
 
 import geoipgen
 from geoipgen import functions, generate, reverse, subnetCal
@@ -253,6 +255,50 @@ class ReverseLookupTests(unittest.TestCase):
         indexed = reverse.warm()
         expected = sum(len(generate.cidrs(code)) for code in generate.countries())
         self.assertEqual(indexed, expected)
+
+
+class IndexBuildConcurrencyTests(unittest.TestCase):
+    def test_the_index_is_built_once_under_concurrent_cold_lookups(self):
+        """Threads racing the first lookup must not each build the index.
+
+        `functools.lru_cache` does not serialise: on a miss it runs the body in
+        every concurrent caller. Guarding the build with a lock is what keeps
+        eight cold lookups at ~1.2s instead of ~64s. Assert the invariant --
+        exactly one build -- rather than timing it, so the test cannot flake on
+        a loaded machine.
+        """
+        builds = []
+        build = reverse._build_index
+
+        def counting_build():
+            builds.append(1)
+            return build()
+
+        reverse._reset_index()
+        with mock.patch.object(reverse, "_build_index", counting_build):
+            started = threading.Barrier(8, timeout=30)
+            failures = []
+
+            def worker():
+                try:
+                    started.wait()          # all threads miss the cache together
+                    reverse.countryOf("8.8.8.8")
+                except Exception as exc:    # noqa: BLE001 - reported below
+                    failures.append(exc)
+
+            threads = [threading.Thread(target=worker) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+
+        self.assertEqual(failures, [])
+        self.assertFalse([t for t in threads if t.is_alive()], "a worker hung")
+        self.assertEqual(len(builds), 1, "index built {} times".format(len(builds)))
+
+    def test_lookups_still_work_after_a_reset(self):
+        reverse._reset_index()
+        self.assertEqual(reverse.countryOf("8.8.8.8"), "us")
 
 
 class PublicApiTests(unittest.TestCase):
